@@ -66,30 +66,6 @@ const determineCardinality = (
         : 'many';
 };
 
-const areRelationshipsEqual = (
-    rel1: {
-        sourceTable?: DBTable;
-        targetTable?: DBTable;
-        sourceField?: DBField;
-        targetField?: DBField;
-    },
-    rel2: {
-        sourceTable?: DBTable;
-        targetTable?: DBTable;
-        sourceField?: DBField;
-        targetField?: DBField;
-    }
-): boolean => {
-    return (
-        rel1.sourceTable?.name === rel2.sourceTable?.name &&
-        rel1.sourceTable?.schema === rel2.sourceTable?.schema &&
-        rel1.targetTable?.name === rel2.targetTable?.name &&
-        rel1.targetTable?.schema === rel2.targetTable?.schema &&
-        rel1.sourceField?.name === rel2.sourceField?.name &&
-        rel1.targetField?.name === rel2.targetField?.name
-    );
-};
-
 export const createRelationshipsFromMetadata = ({
     foreignKeys,
     tables,
@@ -97,107 +73,63 @@ export const createRelationshipsFromMetadata = ({
     foreignKeys: ForeignKeyInfo[];
     tables: DBTable[];
 }): DBRelationship[] => {
-    const uniqueRelationships: Array<{
-        sourceTable?: DBTable;
-        targetTable?: DBTable;
-        sourceField?: DBField;
-        targetField?: DBField;
-        fk: ForeignKeyInfo;
-        sourceSchema?: string;
-        targetSchema?: string;
-    }> = [];
+    return foreignKeys
+        .map((fk: ForeignKeyInfo): DBRelationship | null => {
+            const schema = schemaNameToDomainSchemaName(fk.schema);
+            const sourceTable = tables.find(
+                (table) => table.name === fk.table && table.schema === schema
+            );
 
-    // First pass to collect unique relationships
-    foreignKeys.forEach((fk: ForeignKeyInfo) => {
-        const schema = schemaNameToDomainSchemaName(fk.schema);
-        const sourceTable = tables.find(
-            (table) => table.name === fk.table && table.schema === schema
-        );
-        const targetSchema = schemaNameToDomainSchemaName(fk.reference_schema);
-        const targetTable = tables.find(
-            (table) =>
-                table.name === fk.reference_table &&
-                table.schema === targetSchema
-        );
-        const sourceField = sourceTable?.fields.find(
-            (field) => field.name === fk.column
-        );
-        const targetField = targetTable?.fields.find(
-            (field) => field.name === fk.reference_column
-        );
+            const targetSchema = schemaNameToDomainSchemaName(
+                fk.reference_schema
+            );
 
-        const newRel = {
-            sourceTable,
-            targetTable,
-            sourceField,
-            targetField,
-            fk,
-            sourceSchema: schema,
-            targetSchema,
-        };
+            const targetTable = tables.find(
+                (table) =>
+                    table.name === fk.reference_table &&
+                    table.schema === targetSchema
+            );
+            const sourceField = sourceTable?.fields.find(
+                (field) => field.name === fk.column
+            );
+            const targetField = targetTable?.fields.find(
+                (field) => field.name === fk.reference_column
+            );
 
-        // Check if this relationship already exists
-        const isDuplicate = uniqueRelationships.some((existingRel) =>
-            areRelationshipsEqual(existingRel, newRel)
-        );
+            const isSourceTablePKComplex =
+                (sourceTable?.fields.filter((field) => field.primaryKey) ?? [])
+                    .length > 1;
+            const isTargetTablePKComplex =
+                (targetTable?.fields.filter((field) => field.primaryKey) ?? [])
+                    .length > 1;
 
-        if (!isDuplicate) {
-            uniqueRelationships.push(newRel);
-        }
-    });
+            if (sourceTable && targetTable && sourceField && targetField) {
+                const sourceCardinality = determineCardinality(
+                    sourceField,
+                    isSourceTablePKComplex
+                );
+                const targetCardinality = determineCardinality(
+                    targetField,
+                    isTargetTablePKComplex
+                );
 
-    // Second pass to create the actual relationships
-    return uniqueRelationships
-        .map(
-            ({
-                sourceTable,
-                targetTable,
-                sourceField,
-                targetField,
-                fk,
-                sourceSchema,
-                targetSchema,
-            }) => {
-                if (sourceTable && targetTable && sourceField && targetField) {
-                    const isSourceTablePKComplex =
-                        (
-                            sourceTable.fields.filter(
-                                (field) => field.primaryKey
-                            ) ?? []
-                        ).length > 1;
-                    const isTargetTablePKComplex =
-                        (
-                            targetTable.fields.filter(
-                                (field) => field.primaryKey
-                            ) ?? []
-                        ).length > 1;
-
-                    const sourceCardinality = determineCardinality(
-                        sourceField,
-                        isSourceTablePKComplex
-                    );
-                    const targetCardinality = determineCardinality(
-                        targetField,
-                        isTargetTablePKComplex
-                    );
-
-                    return {
-                        id: generateId(),
-                        name: fk.foreign_key_name,
-                        sourceSchema,
-                        targetSchema,
-                        sourceTableId: sourceTable.id,
-                        targetTableId: targetTable.id,
-                        sourceFieldId: sourceField.id,
-                        targetFieldId: targetField.id,
-                        sourceCardinality,
-                        targetCardinality,
-                        createdAt: Date.now(),
-                    };
-                }
-                return null;
+                return {
+                    id: generateId(),
+                    name: fk.foreign_key_name,
+                    sourceSchema: schema,
+                    targetSchema: targetSchema,
+                    sourceTableId: sourceTable.id,
+                    targetTableId: targetTable.id,
+                    sourceFieldId: sourceField.id,
+                    targetFieldId: targetField.id,
+                    sourceCardinality,
+                    targetCardinality,
+                    createdAt: Date.now(),
+                };
             }
-        )
+
+            return null;
+        })
         .filter((rel) => rel !== null) as DBRelationship[];
 };
 

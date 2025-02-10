@@ -4,6 +4,8 @@ import type { DatabaseType } from '@/lib/domain/database-type';
 import type { DBTable } from '@/lib/domain/db-table';
 import type { DataType } from '../data-types/data-types';
 import { generateCacheKey, getFromCache, setInCache } from './export-sql-cache';
+import type { DBField } from '@/lib/domain/db-field';
+import type { DBRelationship } from '@/lib/domain/db-relationship';
 
 export const exportBaseSQL = (diagram: Diagram): string => {
     const { tables, relationships } = diagram;
@@ -11,6 +13,12 @@ export const exportBaseSQL = (diagram: Diagram): string => {
     if (!tables || tables.length === 0) {
         return '';
     }
+
+    // Filter out duplicate relationships
+    const uniqueRelationships = filterDuplicateRelationships(
+        relationships ?? [],
+        tables
+    );
 
     // Filter out the tables that are views
     const nonViewTables = tables.filter((table) => !table.isView);
@@ -165,7 +173,7 @@ export const exportBaseSQL = (diagram: Diagram): string => {
     });
 
     // Handle relationships (foreign keys)
-    relationships?.forEach((relationship) => {
+    uniqueRelationships.forEach((relationship) => {
         const sourceTable = nonViewTables.find(
             (table) => table.id === relationship.sourceTableId
         );
@@ -467,4 +475,76 @@ const generateSQLPrompt = (databaseType: DatabaseType, sqlScript: string) => {
 
         ${additionalInstructions}
     `;
+};
+
+// Add this helper function before exportBaseSQL
+const areRelationshipsEqual = (
+    rel1: {
+        sourceTable?: DBTable;
+        targetTable?: DBTable;
+        sourceField?: DBField;
+        targetField?: DBField;
+    },
+    rel2: {
+        sourceTable?: DBTable;
+        targetTable?: DBTable;
+        sourceField?: DBField;
+        targetField?: DBField;
+    }
+): boolean => {
+    return (
+        rel1.sourceTable?.name === rel2.sourceTable?.name &&
+        rel1.sourceTable?.schema === rel2.sourceTable?.schema &&
+        rel1.targetTable?.name === rel2.targetTable?.name &&
+        rel1.targetTable?.schema === rel2.targetTable?.schema &&
+        rel1.sourceField?.name === rel2.sourceField?.name &&
+        rel1.targetField?.name === rel2.targetField?.name
+    );
+};
+
+const filterDuplicateRelationships = (
+    relationships: DBRelationship[],
+    tables: DBTable[]
+): DBRelationship[] => {
+    const uniqueRelationships: Array<{
+        sourceTable?: DBTable;
+        targetTable?: DBTable;
+        sourceField?: DBField;
+        targetField?: DBField;
+        relationship: DBRelationship;
+    }> = [];
+
+    relationships.forEach((relationship) => {
+        const sourceTable = tables.find(
+            (table) => table.id === relationship.sourceTableId
+        );
+        const targetTable = tables.find(
+            (table) => table.id === relationship.targetTableId
+        );
+        const sourceField = sourceTable?.fields.find(
+            (field) => field.id === relationship.sourceFieldId
+        );
+        const targetField = targetTable?.fields.find(
+            (field) => field.id === relationship.targetFieldId
+        );
+
+        const newRel = {
+            sourceTable,
+            targetTable,
+            sourceField,
+            targetField,
+            relationship,
+        };
+
+        // Check if this relationship already exists
+        const isDuplicate = uniqueRelationships.some((existingRel) =>
+            areRelationshipsEqual(existingRel, newRel)
+        );
+
+        if (!isDuplicate) {
+            uniqueRelationships.push(newRel);
+        }
+    });
+
+    return uniqueRelationships.map(({ relationship }) => relationship);
 };
